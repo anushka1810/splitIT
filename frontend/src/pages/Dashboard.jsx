@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
+import GroupsSection from '../components/GroupsSection';
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -32,17 +33,7 @@ const Dashboard = () => {
   const renderContent = () => {
     switch (activeSection) {
       case 'Groups':
-        return (
-          <div className="section_content">
-            <header className="header">
-              <h1>Your Groups</h1>
-              <p>Manage your shared groups and see who owes what.</p>
-            </header>
-            <div className="activity_placeholder">
-              <p>Group list will appear here.</p>
-            </div>
-          </div>
-        );
+        return <GroupsSection />;
       case 'Expenses':
         return (
           <div className="section_content">

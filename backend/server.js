@@ -230,6 +230,138 @@ app.post('/api/reset-password', async (req, res) => {
     }
 });
 
+// =======================
+// GROUP MANAGEMENT APIs
+// =======================
+
+// Create a new group
+app.post('/api/groups', authenticateToken, async (req, res) => {
+    try {
+        const { name } = req.body;
+        if (!name) return res.status(400).json({ error: 'Group name is required.' });
+
+        const newGroup = await prisma.group.create({
+            data: {
+                name,
+                createdBy: req.user.id,
+                members: {
+                    create: { userId: req.user.id } // Automatically add creator as member
+                }
+            },
+            include: {
+                members: true
+            }
+        });
+
+        res.status(201).json({ message: 'Group created successfully.', group: newGroup });
+    } catch (error) {
+        console.error('Error creating group:', error);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// Get all groups for the authenticated user
+app.get('/api/groups', authenticateToken, async (req, res) => {
+    try {
+        const groups = await prisma.group.findMany({
+            where: {
+                members: {
+                    some: {
+                        userId: req.user.id,
+                        leftAt: null // Only active memberships
+                    }
+                }
+            },
+            include: {
+                creator: { select: { id: true, name: true, email: true } },
+                _count: { select: { members: true } }
+            },
+            orderBy: { createdAt: 'desc' }
+        });
+
+        res.status(200).json({ groups });
+    } catch (error) {
+        console.error('Error fetching groups:', error);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// Get a specific group by ID
+app.get('/api/groups/:id', authenticateToken, async (req, res) => {
+    try {
+        const groupId = parseInt(req.params.id);
+
+        const group = await prisma.group.findFirst({
+            where: {
+                id: groupId,
+                members: {
+                    some: {
+                        userId: req.user.id,
+                        leftAt: null
+                    }
+                }
+            },
+            include: {
+                creator: { select: { id: true, name: true, email: true } },
+                members: {
+                    include: { user: { select: { id: true, name: true, email: true } } }
+                }
+            }
+        });
+
+        if (!group) return res.status(404).json({ error: 'Group not found or access denied.' });
+
+        res.status(200).json({ group });
+    } catch (error) {
+        console.error('Error fetching group:', error);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// Update a group
+app.put('/api/groups/:id', authenticateToken, async (req, res) => {
+    try {
+        const groupId = parseInt(req.params.id);
+        const { name } = req.body;
+
+        if (!name) return res.status(400).json({ error: 'Group name is required.' });
+
+        const group = await prisma.group.findUnique({ where: { id: groupId } });
+
+        if (!group) return res.status(404).json({ error: 'Group not found.' });
+        if (group.createdBy !== req.user.id) return res.status(403).json({ error: 'Only the creator can edit the group.' });
+
+        const updatedGroup = await prisma.group.update({
+            where: { id: groupId },
+            data: { name }
+        });
+
+        res.status(200).json({ message: 'Group updated successfully.', group: updatedGroup });
+    } catch (error) {
+        console.error('Error updating group:', error);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// Delete a group
+app.delete('/api/groups/:id', authenticateToken, async (req, res) => {
+    try {
+        const groupId = parseInt(req.params.id);
+
+        const group = await prisma.group.findUnique({ where: { id: groupId } });
+
+        if (!group) return res.status(404).json({ error: 'Group not found.' });
+        if (group.createdBy !== req.user.id) return res.status(403).json({ error: 'Only the creator can delete the group.' });
+
+        await prisma.group.delete({ where: { id: groupId } });
+
+        res.status(200).json({ message: 'Group deleted successfully.' });
+    } catch (error) {
+        console.error('Error deleting group:', error);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
 app.listen(3000, () => {
     console.log(`Server running on port 3000`);
 });

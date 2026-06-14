@@ -21,4 +21,31 @@ model User {
   resetToken       String?
   resetTokenExpiry DateTime?
   createdAt        DateTime @default(now())
+
+  // Relationships
+  groupsCreated    Group[]       @relation("GroupCreator")
+  groupMemberships GroupMember[]
+}
+
+model Group {
+  id        Int           @id @default(autoincrement())
+  name      String
+  createdBy Int
+  createdAt DateTime      @default(now())
+  
+  // Relationships
+  creator   User          @relation("GroupCreator", fields: [createdBy], references: [id])
+  members   GroupMember[]
+}
+
+model GroupMember {
+  id       Int       @id @default(autoincrement())
+  groupId  Int
+  userId   Int
+  joinedAt DateTime  @default(now())
+  leftAt   DateTime?
+
+  // Relationships
+  group    Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
