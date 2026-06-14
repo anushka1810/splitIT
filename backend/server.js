@@ -3,6 +3,7 @@ const cors = require('cors');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const prisma = require('./prismaClient');
+const authenticateToken = require('./middleware/auth');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_key_for_development';
 
@@ -124,8 +125,36 @@ app.post('/api/login', async (req, res) => {
     }
 });
 
+// Protected route example — requires a valid Bearer token
+app.get('/api/me', authenticateToken, async (req, res) => {
+    try {
+        const user = await prisma.user.findUnique({
+            where: { id: req.user.id },
+            select: { id: true, name: true, email: true, createdAt: true }
+        });
+
+        if (!user) {
+            return res.status(404).json({ error: 'User not found.' });
+        }
+
+        res.status(200).json({ user });
+    } catch (error) {
+        console.error('Error fetching user:', error);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
 app.listen(3000, () => {
     console.log(`Server running on port 3000`);
+});
+
+// Prevent silent crashes — log and keep the process alive
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Promise Rejection:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+    console.error('Uncaught Exception:', err);
 });
 
 module.exports = app;
