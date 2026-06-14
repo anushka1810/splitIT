@@ -99,6 +99,12 @@ const GroupDetails = () => {
                     View Expenses &rarr;
                 </button>
                 <button 
+                    className="view_settlements_btn" 
+                    onClick={() => navigate(`/groups/${id}/settlements`)}
+                >
+                    Settlements &rarr;
+                </button>
+                <button 
                     className="view_balances_btn" 
                     onClick={() => navigate(`/groups/${id}/balances`)}
                 >
@@ -210,7 +216,7 @@ const Wrapper = styled.div`
     p { font-size: 1.1rem; color: #555; }
   }
 
-  .view_expenses_btn, .view_balances_btn {
+  .view_expenses_btn, .view_balances_btn, .view_settlements_btn {
     background: #264143;
     color: #fff;
     border: 2px solid #264143;
@@ -227,6 +233,12 @@ const Wrapper = styled.div`
   .view_balances_btn {
     background: #DE5499;
     border-color: #DE5499;
+  }
+
+  .view_settlements_btn {
+    background: #E99F4C;
+    border-color: #E99F4C;
+    color: #264143;
   }
 
   .back_btn {

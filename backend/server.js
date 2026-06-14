@@ -775,8 +775,13 @@ app.get('/api/groups/:groupId/balances', authenticateToken, async (req, res) => 
             include: { participants: true }
         });
 
+        // Fetch all settlements involving the group
+        const settlements = await prisma.settlement.findMany({
+            where: { groupId }
+        });
+
         // Use pure utility
-        const balances = calculateGroupBalances(expenses, group.members);
+        const balances = calculateGroupBalances(expenses, settlements, group.members);
 
         res.status(200).json({ members: balances });
     } catch (error) {
@@ -815,12 +820,194 @@ app.get('/api/groups/:groupId/balances/:userId', authenticateToken, async (req, 
             orderBy: { expenseDate: 'desc' }
         });
 
+        // Fetch all settlements involving the group
+        const settlements = await prisma.settlement.findMany({
+            where: { groupId },
+            include: {
+                payer: { select: { name: true } },
+                receiver: { select: { name: true } }
+            }
+        });
+
         // Use pure utility
-        const breakdown = calculateIndividualBreakdown(targetUserId, targetUser, expenses);
+        const breakdown = calculateIndividualBreakdown(targetUserId, targetUser, expenses, settlements);
 
         res.status(200).json(breakdown);
     } catch (error) {
         console.error('Error fetching individual balance breakdown:', error);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// =======================
+// SETTLEMENT APIs
+// =======================
+
+// Create a settlement
+app.post('/api/groups/:groupId/settlements', authenticateToken, async (req, res) => {
+    try {
+        const groupId = parseInt(req.params.groupId);
+        const { amount, settlementDate, notes, payerId, receiverId } = req.body;
+
+        if (!amount || !settlementDate || !payerId || !receiverId) {
+            return res.status(400).json({ error: 'All required fields must be provided.' });
+        }
+        if (amount <= 0) {
+            return res.status(400).json({ error: 'Amount must be greater than zero.' });
+        }
+        if (payerId === receiverId) {
+            return res.status(400).json({ error: 'Payer and receiver cannot be the same person.' });
+        }
+        if (new Date(settlementDate) > new Date()) {
+            return res.status(400).json({ error: 'Settlement date cannot be in the future.' });
+        }
+
+        const group = await prisma.group.findUnique({
+            where: { id: groupId },
+            include: { members: { where: { leftAt: null } } }
+        });
+
+        if (!group) return res.status(404).json({ error: 'Group not found.' });
+
+        const isRequesterMember = group.members.some(m => m.userId === req.user.id) || group.createdBy === req.user.id;
+        if (!isRequesterMember) return res.status(403).json({ error: 'Access denied.' });
+
+        const isPayerMember = group.members.some(m => m.userId === payerId);
+        const isReceiverMember = group.members.some(m => m.userId === receiverId);
+        if (!isPayerMember || !isReceiverMember) {
+            return res.status(400).json({ error: 'Both payer and receiver must be active group members.' });
+        }
+
+        const settlement = await prisma.settlement.create({
+            data: {
+                amount,
+                settlementDate: new Date(settlementDate),
+                notes,
+                groupId,
+                payerId,
+                receiverId,
+                createdBy: req.user.id
+            }
+        });
+
+        res.status(201).json({ message: 'Settlement created successfully.', settlement });
+    } catch (error) {
+        console.error('Error creating settlement:', error);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// Get all settlements for a group
+app.get('/api/groups/:groupId/settlements', authenticateToken, async (req, res) => {
+    try {
+        const groupId = parseInt(req.params.groupId);
+        
+        const groupAccess = await prisma.group.findFirst({
+            where: {
+                id: groupId,
+                OR: [
+                    { createdBy: req.user.id },
+                    { members: { some: { userId: req.user.id } } }
+                ]
+            }
+        });
+        if (!groupAccess) return res.status(403).json({ error: 'Access denied.' });
+
+        const settlements = await prisma.settlement.findMany({
+            where: { groupId },
+            include: {
+                payer: { select: { id: true, name: true } },
+                receiver: { select: { id: true, name: true } },
+                creator: { select: { id: true, name: true } }
+            },
+            orderBy: { settlementDate: 'desc' }
+        });
+
+        res.status(200).json({ settlements });
+    } catch (error) {
+        console.error('Error fetching settlements:', error);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// Get specific settlement
+app.get('/api/settlements/:settlementId', authenticateToken, async (req, res) => {
+    try {
+        const settlementId = parseInt(req.params.settlementId);
+
+        const settlement = await prisma.settlement.findUnique({
+            where: { id: settlementId },
+            include: {
+                group: { include: { members: true } },
+                payer: { select: { id: true, name: true } },
+                receiver: { select: { id: true, name: true } },
+                creator: { select: { id: true, name: true } }
+            }
+        });
+
+        if (!settlement) return res.status(404).json({ error: 'Settlement not found.' });
+
+        const isAuthorized = settlement.group.createdBy === req.user.id || settlement.group.members.some(m => m.userId === req.user.id);
+        if (!isAuthorized) return res.status(403).json({ error: 'Access denied.' });
+
+        res.status(200).json({ settlement });
+    } catch (error) {
+        console.error('Error fetching settlement:', error);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// Update settlement
+app.put('/api/settlements/:settlementId', authenticateToken, async (req, res) => {
+    try {
+        const settlementId = parseInt(req.params.settlementId);
+        const { amount, settlementDate, notes, payerId, receiverId } = req.body;
+
+        const settlement = await prisma.settlement.findUnique({ where: { id: settlementId } });
+        if (!settlement) return res.status(404).json({ error: 'Settlement not found.' });
+
+        if (settlement.createdBy !== req.user.id && settlement.payerId !== req.user.id && settlement.receiverId !== req.user.id) {
+            return res.status(403).json({ error: 'Only the creator, payer, or receiver can edit this settlement.' });
+        }
+
+        if (amount <= 0) return res.status(400).json({ error: 'Amount must be greater than zero.' });
+        if (payerId === receiverId) return res.status(400).json({ error: 'Payer and receiver cannot be the same person.' });
+        if (new Date(settlementDate) > new Date()) return res.status(400).json({ error: 'Settlement date cannot be in the future.' });
+
+        await prisma.settlement.update({
+            where: { id: settlementId },
+            data: {
+                amount,
+                settlementDate: new Date(settlementDate),
+                notes,
+                payerId,
+                receiverId
+            }
+        });
+
+        res.status(200).json({ message: 'Settlement updated successfully.' });
+    } catch (error) {
+        console.error('Error updating settlement:', error);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// Delete settlement
+app.delete('/api/settlements/:settlementId', authenticateToken, async (req, res) => {
+    try {
+        const settlementId = parseInt(req.params.settlementId);
+
+        const settlement = await prisma.settlement.findUnique({ where: { id: settlementId } });
+        if (!settlement) return res.status(404).json({ error: 'Settlement not found.' });
+
+        if (settlement.createdBy !== req.user.id && settlement.payerId !== req.user.id && settlement.receiverId !== req.user.id) {
+            return res.status(403).json({ error: 'Only the creator, payer, or receiver can delete this settlement.' });
+        }
+
+        await prisma.settlement.delete({ where: { id: settlementId } });
+        res.status(200).json({ message: 'Settlement deleted successfully.' });
+    } catch (error) {
+        console.error('Error deleting settlement:', error);
         res.status(500).json({ error: 'Internal server error.' });
     }
 });

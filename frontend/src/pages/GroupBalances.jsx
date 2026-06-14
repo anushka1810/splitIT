@@ -10,6 +10,7 @@ const GroupBalances = () => {
   const [balances, setBalances] = useState([]);
   const [selectedUser, setSelectedUser] = useState(null);
   const [breakdown, setBreakdown] = useState(null);
+  const [showBeforeSettlements, setShowBeforeSettlements] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [loadingBreakdown, setLoadingBreakdown] = useState(false);
@@ -65,8 +66,20 @@ const GroupBalances = () => {
     <Wrapper>
       <header className="header">
         <button className="back_btn" onClick={() => navigate(`/groups/${groupId}`)}>&larr; Back to Group</button>
-        <h1>Group Balances</h1>
-        <p>A high-level summary of who owes whom.</p>
+        <div className="title_row">
+            <div>
+                <h1>Group Balances</h1>
+                <p>A high-level summary of who owes whom.</p>
+            </div>
+            <div className="toggle_container">
+                <span className={showBeforeSettlements ? 'active' : ''}>Before Settlements</span>
+                <label className="switch">
+                    <input type="checkbox" checked={!showBeforeSettlements} onChange={() => setShowBeforeSettlements(!showBeforeSettlements)} />
+                    <span className="slider round"></span>
+                </label>
+                <span className={!showBeforeSettlements ? 'active' : ''}>After Settlements</span>
+            </div>
+        </div>
       </header>
 
       <div className="content_grid">
@@ -78,18 +91,19 @@ const GroupBalances = () => {
             ) : (
                 <div className="balance_list">
                     {balances.map(member => {
-                        const isPositive = member.netBalance > 0.01;
-                        const isNegative = member.netBalance < -0.01;
+                        const targetBalance = showBeforeSettlements ? member.balanceBeforeSettlements : member.netBalance;
+                        const isPositive = targetBalance > 0.01;
+                        const isNegative = targetBalance < -0.01;
                         
                         let displayClass = 'settled';
                         let displayText = 'Settled';
                         
                         if (isPositive) {
                             displayClass = 'positive';
-                            displayText = `Should receive ${member.netBalance.toFixed(2)}`;
+                            displayText = `Should receive ${targetBalance.toFixed(2)}`;
                         } else if (isNegative) {
                             displayClass = 'negative';
-                            displayText = `Owes ${Math.abs(member.netBalance).toFixed(2)}`;
+                            displayText = `Owes ${Math.abs(targetBalance).toFixed(2)}`;
                         }
 
                         const isSelected = selectedUser === member.userId;
@@ -134,9 +148,9 @@ const GroupBalances = () => {
                       </div>
                   </div>
 
-                  <h3>Expense History</h3>
+                  <h3>Timeline</h3>
                   {breakdown.breakdown.length === 0 ? (
-                      <p className="empty">No expenses found for this user.</p>
+                      <p className="empty">No expenses or settlements found.</p>
                   ) : (
                       <ul className="history_list">
                           {breakdown.breakdown.map(item => {
@@ -145,13 +159,21 @@ const GroupBalances = () => {
                               let impactClass = 'neutral';
                               if (isPositiveImpact) impactClass = 'pos';
                               if (isNegativeImpact) impactClass = 'neg';
+                              const isSettlement = item.type === 'SETTLEMENT';
 
                               return (
-                                  <li key={item.expenseId}>
+                                  <li key={item.id} className={isSettlement ? 'settlement_item' : ''}>
                                       <div className="item_info">
-                                          <strong>{item.description}</strong>
-                                          <span>Total: {item.amount.toFixed(2)} (Paid by {item.payer})</span>
-                                          <span>Their Share: {item.userShare.toFixed(2)}</span>
+                                          <strong>{isSettlement ? '💸 ' : ''}{item.description}</strong>
+                                          <span className="date">{new Date(item.date).toLocaleDateString()}</span>
+                                          {isSettlement ? (
+                                              <span>Settlement (Paid by {item.payer})</span>
+                                          ) : (
+                                              <>
+                                                <span>Total: {item.amount.toFixed(2)} (Paid by {item.payer})</span>
+                                                <span>Their Share: {item.userShare.toFixed(2)}</span>
+                                              </>
+                                          )}
                                       </div>
                                       <div className={`item_impact ${impactClass}`}>
                                           {item.impact > 0 ? '+' : ''}{item.impact.toFixed(2)}
@@ -182,9 +204,53 @@ const Wrapper = styled.div`
 
   .header {
     margin-bottom: 40px;
+    .title_row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
     h1 { font-size: 2.5rem; margin-bottom: 5px; color: #DE5499; font-weight: 900; }
-    p { font-size: 1.1rem; color: #555; }
+    p { font-size: 1.1rem; color: #555; margin: 0; }
   }
+
+  .toggle_container {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: bold;
+      color: #888;
+      .active { color: #DE5499; }
+  }
+
+  /* Toggle Switch CSS */
+  .switch {
+    position: relative;
+    display: inline-block;
+    width: 50px;
+    height: 28px;
+  }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-color: #ccc;
+    transition: .4s;
+  }
+  .slider:before {
+    position: absolute;
+    content: "";
+    height: 20px;
+    width: 20px;
+    left: 4px;
+    bottom: 4px;
+    background-color: white;
+    transition: .4s;
+  }
+  input:checked + .slider { background-color: #264143; }
+  input:checked + .slider:before { transform: translateX(22px); }
+  .slider.round { border-radius: 34px; }
+  .slider.round:before { border-radius: 50%; }
 
   .back_btn {
     background: none;
@@ -294,6 +360,7 @@ const Wrapper = styled.div`
         flex-direction: column;
         strong { font-size: 1.1rem; margin-bottom: 3px; }
         span { font-size: 0.85rem; color: #666; }
+        .date { font-weight: bold; color: #E99F4C; }
     }
 
     .item_impact {
@@ -302,6 +369,14 @@ const Wrapper = styled.div`
         &.pos { color: #0d8a43; }
         &.neg { color: #d93025; }
         &.neutral { color: #888; }
+    }
+
+    li.settlement_item {
+        background: #fff8f0;
+        padding: 15px;
+        border-radius: 8px;
+        border: 1px solid #E99F4C;
+        margin-top: 5px;
     }
   }
 

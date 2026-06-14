@@ -28,6 +28,9 @@ model User {
   expensesPaid     Expense[]     @relation("ExpensePayer")
   expensesCreated  Expense[]     @relation("ExpenseCreator")
   expenseParticipations ExpenseParticipant[]
+  settlementsPaid  Settlement[]  @relation("SettlementPayer")
+  settlementsRcvd  Settlement[]  @relation("SettlementReceiver")
+  settlementsCrtd  Settlement[]  @relation("SettlementCreator")
 }
 
 model Group {
@@ -40,6 +43,7 @@ model Group {
   creator   User          @relation("GroupCreator", fields: [createdBy], references: [id])
   members   GroupMember[]
   expenses  Expense[]
+  settlements Settlement[]
 }
 
 model GroupMember {
@@ -90,4 +94,22 @@ model ExpenseParticipant {
   // Relationships
   expense   Expense  @relation(fields: [expenseId], references: [id], onDelete: Cascade)
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Settlement {
+  id             Int      @id @default(autoincrement())
+  amount         Float
+  settlementDate DateTime
+  notes          String?
+  groupId        Int
+  payerId        Int
+  receiverId     Int
+  createdBy      Int
+  createdAt      DateTime @default(now())
+
+  // Relationships
+  group    Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  payer    User  @relation("SettlementPayer", fields: [payerId], references: [id])
+  receiver User  @relation("SettlementReceiver", fields: [receiverId], references: [id])
+  creator  User  @relation("SettlementCreator", fields: [createdBy], references: [id])
 }

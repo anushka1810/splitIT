@@ -22,7 +22,7 @@ describe('Balance Engine', () => {
                 ]
             }];
 
-            const balances = calculateGroupBalances(expenses, mockMembers);
+            const balances = calculateGroupBalances(expenses, [], mockMembers);
             
             // Everyone owes 100
             // Rohan: paid 300, owes 100 -> +200
@@ -51,7 +51,7 @@ describe('Balance Engine', () => {
                 ]
             }];
 
-            const balances = calculateGroupBalances(expenses, mockMembers);
+            const balances = calculateGroupBalances(expenses, [], mockMembers);
 
             const rohan = balances.find(b => b.userId === 1);
             const priya = balances.find(b => b.userId === 2);
@@ -75,7 +75,7 @@ describe('Balance Engine', () => {
                 ]
             }];
 
-            const balances = calculateGroupBalances(expenses, mockMembers);
+            const balances = calculateGroupBalances(expenses, [], mockMembers);
 
             const rohan = balances.find(b => b.userId === 1);
             const priya = balances.find(b => b.userId === 2);
@@ -98,7 +98,7 @@ describe('Balance Engine', () => {
                 }
             ];
 
-            const balances = calculateGroupBalances(expenses, mockMembers);
+            const balances = calculateGroupBalances(expenses, [], mockMembers);
             
             // Rohan: paid 300 (exp1), owes 100 (exp1) + 200 (exp2) = 300. Net: 0
             // Priya: paid 200 (exp2), owes 100 (exp1). Net: +100
@@ -110,6 +110,37 @@ describe('Balance Engine', () => {
 
             expect(rohan.netBalance).toBe(0);
             expect(priya.netBalance).toBe(100);
+            expect(dev.netBalance).toBe(-100);
+        });
+
+        test('Applies settlements to balances correctly', () => {
+            const expenses = [{
+                id: 1, amount: 300, splitType: 'EQUAL', payerId: 1,
+                participants: [{ userId: 1 }, { userId: 2 }, { userId: 3 }] // 100 each
+            }];
+            // Rohan owes 100, paid 300 -> net +200
+            // Priya owes 100, paid 0 -> net -100
+            // Dev owes 100, paid 0 -> net -100
+
+            const settlements = [
+                { id: 1, amount: 50, payerId: 2, receiverId: 1 } // Priya pays Rohan 50
+            ];
+
+            const balances = calculateGroupBalances(expenses, settlements, mockMembers);
+
+            const rohan = balances.find(b => b.userId === 1);
+            const priya = balances.find(b => b.userId === 2);
+            const dev = balances.find(b => b.userId === 3);
+
+            // Rohan: 200 - 50 = +150
+            expect(rohan.netBalance).toBe(150);
+            expect(rohan.balanceBeforeSettlements).toBe(200);
+
+            // Priya: -100 + 50 = -50
+            expect(priya.netBalance).toBe(-50);
+            expect(priya.balanceBeforeSettlements).toBe(-100);
+
+            // Dev untouched
             expect(dev.netBalance).toBe(-100);
         });
     });
@@ -143,6 +174,36 @@ describe('Balance Engine', () => {
             
             // Expense 2: Cab
             expect(breakdown.breakdown[1].impact).toBe(-200); // Paid 0 - Owes 200
+        });
+
+        test('Includes settlements in breakdown timeline', () => {
+            const expenses = [{
+                id: 1, description: 'Lunch', expenseDate: '2026-06-10T12:00:00Z', amount: 300, splitType: 'EQUAL', payerId: 1,
+                payer: { name: 'Rohan' },
+                participants: [{ userId: 1 }, { userId: 2 }, { userId: 3 }]
+            }];
+
+            const settlements = [
+                { 
+                    id: 1, amount: 50, settlementDate: '2026-06-11T12:00:00Z', 
+                    payerId: 2, receiverId: 1, 
+                    payer: { name: 'Priya' }, receiver: { name: 'Rohan' }, notes: 'For lunch'
+                }
+            ];
+
+            const breakdown = calculateIndividualBreakdown(1, { name: 'Rohan' }, expenses, settlements);
+
+            // Rohan net: +200 from expense, -50 from settlement (he received 50, so he is owed 50 less)
+            expect(breakdown.netBalance).toBe(150);
+
+            // Timeline should be sorted by date desc, so settlement (11th) is first, expense (10th) is second
+            expect(breakdown.breakdown).toHaveLength(2);
+            expect(breakdown.breakdown[0].type).toBe('SETTLEMENT');
+            expect(breakdown.breakdown[0].impact).toBe(-50); // Received 50
+            expect(breakdown.breakdown[0].description).toBe('For lunch');
+            
+            expect(breakdown.breakdown[1].type).toBe('EXPENSE');
+            expect(breakdown.breakdown[1].impact).toBe(200);
         });
     });
 });
