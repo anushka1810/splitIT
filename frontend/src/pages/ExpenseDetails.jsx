@@ -148,7 +148,7 @@ const Wrapper = styled.div`
   font-family: "Trebuchet MS", Arial, sans-serif;
   color: #264143;
   padding: 40px;
-  max-width: 1000px;
+  max-width: 1200px;
   margin: 0 auto;
 
   h1, h2, h3, p { color: #264143; margin-top: 0; }

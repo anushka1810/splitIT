@@ -7,6 +7,7 @@ import GroupExpenses from './pages/GroupExpenses'
 import ExpenseDetails from './pages/ExpenseDetails'
 import GroupBalances from './pages/GroupBalances'
 import GroupSettlements from './pages/GroupSettlements'
+import ImportExpenses from './pages/ImportExpenses'
 
 function App() {
   return (
@@ -18,6 +19,7 @@ function App() {
       <Route path="/groups/:id/expenses" element={<GroupExpenses />} />
       <Route path="/groups/:id/balances" element={<GroupBalances />} />
       <Route path="/groups/:id/settlements" element={<GroupSettlements />} />
+      <Route path="/groups/:id/import" element={<ImportExpenses />} />
       <Route path="/expenses/:expenseId" element={<ExpenseDetails />} />
       {/* Redirect root to login */}
       <Route path="*" element={<Navigate to="/login" replace />} />

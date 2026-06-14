@@ -31,6 +31,7 @@ model User {
   settlementsPaid  Settlement[]  @relation("SettlementPayer")
   settlementsRcvd  Settlement[]  @relation("SettlementReceiver")
   settlementsCrtd  Settlement[]  @relation("SettlementCreator")
+  importResolutions ImportMemberResolution[]
 }
 
 model Group {
@@ -44,6 +45,7 @@ model Group {
   members   GroupMember[]
   expenses  Expense[]
   settlements Settlement[]
+  imports     ImportSession[]
 }
 
 model GroupMember {
@@ -112,4 +114,37 @@ model Settlement {
   payer    User  @relation("SettlementPayer", fields: [payerId], references: [id])
   receiver User  @relation("SettlementReceiver", fields: [receiverId], references: [id])
   creator  User  @relation("SettlementCreator", fields: [createdBy], references: [id])
+}
+
+model ImportSession {
+  id         String   @id @default(uuid())
+  groupId    Int
+  rawCsvData Json
+  createdAt  DateTime @default(now())
+
+  // Relationships
+  group      Group                    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  resolutions ImportMemberResolution[]
+}
+
+enum ResolutionType {
+  MAP_EXISTING
+  CREATE_NEW_MEMBER
+  CREATE_GUEST
+}
+
+model ImportMemberResolution {
+  id              Int            @id @default(autoincrement())
+  importSessionId String
+  csvMemberName   String
+  resolutionType  ResolutionType
+  resolvedUserId  Int?
+  guestName       String?
+  createdAt       DateTime       @default(now())
+
+  // Relationships
+  session         ImportSession  @relation(fields: [importSessionId], references: [id], onDelete: Cascade)
+  resolvedUser    User?          @relation(fields: [resolvedUserId], references: [id])
+
+  @@unique([importSessionId, csvMemberName])
 }

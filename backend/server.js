@@ -4,9 +4,38 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
+const fs = require('fs');
+const path = require('path');
+const multer = require('multer');
+const csvParser = require('csv-parser');
 const prisma = require('./prismaClient');
 const authenticateToken = require('./middleware/auth');
 const { calculateGroupBalances, calculateIndividualBreakdown } = require('./utils/balanceEngine');
+const { analyzeImport } = require('./utils/importAnalyzer');
+
+// Setup multer storage
+const uploadDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir);
+}
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+        cb(null, Date.now() + '-' + file.originalname);
+    }
+});
+const upload = multer({ 
+    storage,
+    fileFilter: (req, file, cb) => {
+        if (file.mimetype === 'text/csv' || file.originalname.endsWith('.csv')) {
+            cb(null, true);
+        } else {
+            cb(new Error('Only CSV files are allowed.'));
+        }
+    }
+});
 
 // Transporter setup for sending emails
 const transporter = nodemailer.createTransport({
@@ -1008,6 +1037,312 @@ app.delete('/api/settlements/:settlementId', authenticateToken, async (req, res)
         res.status(200).json({ message: 'Settlement deleted successfully.' });
     } catch (error) {
         console.error('Error deleting settlement:', error);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// =======================
+// CSV IMPORT APIs
+// =======================
+
+// 1. Create Import Session & Extract Members (Tier 0)
+app.post('/api/groups/:groupId/imports/session', authenticateToken, upload.single('file'), async (req, res) => {
+    try {
+        const groupId = parseInt(req.params.groupId);
+
+        const group = await prisma.group.findUnique({
+            where: { id: groupId },
+            include: { members: { include: { user: true } } }
+        });
+
+        if (!group) {
+            if (req.file) fs.unlinkSync(req.file.path);
+            return res.status(404).json({ error: 'Group not found.' });
+        }
+
+        const isMember = group.members.some(m => m.userId === req.user.id) || group.createdBy === req.user.id;
+        if (!isMember) {
+            if (req.file) fs.unlinkSync(req.file.path);
+            return res.status(403).json({ error: 'Access denied.' });
+        }
+
+        if (!req.file) {
+            return res.status(400).json({ error: 'No CSV file provided.' });
+        }
+
+        const allRows = [];
+        fs.createReadStream(req.file.path)
+            .pipe(csvParser())
+            .on('data', (data) => {
+                allRows.push(data);
+            })
+            .on('end', async () => {
+                // Extract unique names case-insensitively
+                const extractedNamesMap = new Map();
+                const addName = (rawName) => {
+                    if (!rawName) return;
+                    const name = rawName.trim();
+                    if (!name) return;
+                    const norm = name.toLowerCase();
+                    if (!extractedNamesMap.has(norm)) {
+                        // Use Title Case for display
+                        const titleCased = norm.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+                        extractedNamesMap.set(norm, titleCased);
+                    }
+                };
+
+                allRows.forEach(rawRow => {
+                    const row = {};
+                    for (const key in rawRow) {
+                        row[key.toLowerCase().trim()] = rawRow[key];
+                    }
+                    const payer = row['payer'] || row['paid_by'] || row['paid by'];
+                    addName(payer);
+                    
+                    const splitWith = row['split_with'] || row['split_details'];
+                    if (splitWith) {
+                        splitWith.split(/[,;]/).forEach(n => addName(n));
+                    }
+                });
+
+                // Create session
+                const session = await prisma.importSession.create({
+                    data: {
+                        groupId,
+                        rawCsvData: allRows
+                    }
+                });
+
+                res.status(200).json({
+                    sessionId: session.id,
+                    csvMembers: Array.from(extractedNamesMap.values()),
+                    existingGroupMembers: group.members.map(m => m.user)
+                });
+                
+                fs.unlinkSync(req.file.path);
+            })
+            .on('error', (err) => {
+                console.error(err);
+                if (req.file) fs.unlinkSync(req.file.path);
+                res.status(500).json({ error: 'Error parsing CSV file.' });
+            });
+    } catch (error) {
+        console.error(error);
+        if (req.file) fs.unlinkSync(req.file.path);
+        res.status(500).json({ error: 'Server error during import session creation.' });
+    }
+});
+
+// 2. Resolve Members (Tier 0 completion)
+app.post('/api/imports/:sessionId/member-resolutions', authenticateToken, async (req, res) => {
+    try {
+        const { sessionId } = req.params;
+        const { resolutions } = req.body; // Array of { csvMemberName, resolutionType, resolvedUserId, guestName }
+
+        const session = await prisma.importSession.findUnique({
+            where: { id: sessionId },
+            include: { group: true }
+        });
+
+        if (!session) return res.status(404).json({ error: 'Session not found.' });
+
+        const createdResolutions = [];
+
+        // Process sequentially to handle user creation
+        for (const resData of resolutions) {
+            let finalUserId = resData.resolvedUserId;
+            
+            if (resData.resolutionType === 'CREATE_NEW_MEMBER') {
+                // Check if user exists by email (dummy email for now based on name)
+                const dummyEmail = `${resData.csvMemberName.toLowerCase().replace(/\s+/g, '')}@splitit.local`;
+                let user = await prisma.user.findUnique({ where: { email: dummyEmail } });
+                
+                if (!user) {
+                    const hashed = await bcrypt.hash('password123', 10);
+                    user = await prisma.user.create({
+                        data: { name: resData.csvMemberName, email: dummyEmail, password: hashed }
+                    });
+                }
+
+                // Add to group if not already
+                const membership = await prisma.groupMember.findFirst({
+                    where: { groupId: session.groupId, userId: user.id, leftAt: null }
+                });
+
+                if (!membership) {
+                    await prisma.groupMember.create({
+                        data: { groupId: session.groupId, userId: user.id }
+                    });
+                }
+                finalUserId = user.id;
+            }
+
+            // Save resolution
+            const resolution = await prisma.importMemberResolution.create({
+                data: {
+                    importSessionId: sessionId,
+                    csvMemberName: resData.csvMemberName,
+                    resolutionType: resData.resolutionType,
+                    resolvedUserId: finalUserId,
+                    guestName: resData.resolutionType === 'CREATE_GUEST' ? resData.csvMemberName : null
+                }
+            });
+            createdResolutions.push(resolution);
+        }
+
+        res.status(200).json({ message: 'Members resolved successfully', resolutions: createdResolutions });
+
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Server error resolving members.' });
+    }
+});
+
+// 3. Analyze Import (Tier 1-4)
+app.post('/api/groups/:groupId/imports/:sessionId/analyze', authenticateToken, async (req, res) => {
+    try {
+        const groupId = parseInt(req.params.groupId);
+        const { sessionId } = req.params;
+
+        const session = await prisma.importSession.findUnique({
+            where: { id: sessionId },
+            include: { resolutions: { include: { resolvedUser: true } } }
+        });
+
+        if (!session) return res.status(404).json({ error: 'Session not found.' });
+
+        // Get fresh group members (including newly created ones)
+        const group = await prisma.group.findUnique({
+            where: { id: groupId },
+            include: { members: { include: { user: true } } }
+        });
+
+        const existingExpenses = await prisma.expense.findMany({
+            where: { groupId }
+        });
+
+        // Map the rawCsvData using resolutions
+        const resolvedCsvData = session.rawCsvData.map(rawRow => {
+            // we have to mutate the original row keys so that analyzeImport can parse it,
+            // but we must find the original keys that match 'payer' and 'split_with' case-insensitively
+            let newRow = { ...rawRow };
+            for (const key in rawRow) {
+                const stdKey = key.toLowerCase().trim();
+                const val = rawRow[key];
+
+                if (stdKey === 'payer' || stdKey === 'paid_by' || stdKey === 'paid by') {
+                    if (val) {
+                        const res = session.resolutions.find(r => r.csvMemberName.toLowerCase() === val.trim().toLowerCase());
+                        if (res) {
+                            newRow[key] = res.resolutionType === 'CREATE_GUEST' 
+                                ? `Guest: ${res.guestName}` 
+                                : res.resolvedUser?.name || val;
+                        }
+                    }
+                }
+                
+                if (stdKey === 'split_with' || stdKey === 'split_details') {
+                    if (val) {
+                        const splits = val.split(/[,;]/).map(n => {
+                            const res = session.resolutions.find(r => r.csvMemberName.toLowerCase() === n.trim().toLowerCase());
+                            if (res) {
+                                return res.resolutionType === 'CREATE_GUEST'
+                                    ? `Guest: ${res.guestName}`
+                                    : res.resolvedUser?.name || n.trim();
+                            }
+                            return n.trim();
+                        });
+                        // Use original delimiter
+                        const delim = val.includes(';') ? ';' : ',';
+                        newRow[key] = splits.join(delim);
+                    }
+                }
+            }
+            return newRow;
+        });
+
+        // Analyze mapped rows
+        const analysisResult = analyzeImport(resolvedCsvData, group.members, existingExpenses);
+
+        res.status(200).json({
+            analysis: analysisResult
+        });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: 'Server error during anomaly detection.' });
+    }
+});
+
+// Commit analyzed rows to database
+app.post('/api/groups/:groupId/imports/commit', authenticateToken, async (req, res) => {
+    try {
+        const groupId = parseInt(req.params.groupId);
+        const { expensesToCreate, settlementsToCreate } = req.body;
+
+        if (!expensesToCreate && !settlementsToCreate) {
+            return res.status(400).json({ error: 'No valid data provided to commit.' });
+        }
+
+        // Verify group access
+        const group = await prisma.group.findUnique({
+            where: { id: groupId },
+            include: { members: { include: { user: true } } }
+        });
+
+        if (!group) return res.status(404).json({ error: 'Group not found.' });
+
+        const isMember = group.members.some(m => m.userId === req.user.id) || group.createdBy === req.user.id;
+        if (!isMember) return res.status(403).json({ error: 'Access denied.' });
+
+        // Use Prisma transaction for bulk insert
+        const operations = [];
+
+        if (expensesToCreate && expensesToCreate.length > 0) {
+            for (const exp of expensesToCreate) {
+                // Create expense and participants atomically
+                operations.push(prisma.expense.create({
+                    data: {
+                        description: exp.description,
+                        amount: exp.amount,
+                        currency: exp.currency || 'INR',
+                        expenseDate: new Date(exp.expenseDate),
+                        splitType: 'EQUAL',
+                        groupId: groupId,
+                        payerId: exp.payerId,
+                        createdBy: req.user.id,
+                        notes: 'Imported via CSV',
+                        participants: {
+                            create: exp.participantIds.map(userId => ({
+                                userId: userId
+                            }))
+                        }
+                    }
+                }));
+            }
+        }
+
+        if (settlementsToCreate && settlementsToCreate.length > 0) {
+            for (const set of settlementsToCreate) {
+                operations.push(prisma.settlement.create({
+                    data: {
+                        amount: set.amount,
+                        settlementDate: new Date(set.settlementDate),
+                        notes: set.notes || 'Imported via CSV',
+                        groupId: groupId,
+                        payerId: set.payerId,
+                        receiverId: set.receiverId,
+                        createdBy: req.user.id
+                    }
+                }));
+            }
+        }
+
+        await prisma.$transaction(operations);
+
+        res.status(200).json({ message: 'Data imported successfully!' });
+
+    } catch (error) {
+        console.error('Error committing import:', error);
         res.status(500).json({ error: 'Internal server error.' });
     }
 });

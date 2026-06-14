@@ -110,6 +110,12 @@ const GroupDetails = () => {
                 >
                     Balances &rarr;
                 </button>
+                <button 
+                    className="import_csv_btn" 
+                    onClick={() => navigate(`/groups/${id}/import`)}
+                >
+                    Import CSV &rarr;
+                </button>
             </div>
         </div>
       </header>
@@ -211,12 +217,13 @@ const Wrapper = styled.div`
   h1, h2, h3, p { color: #264143; margin-top: 0; }
 
   .header {
-    margin-bottom: 40px;
+    margin: 0 auto 40px auto;
+    max-width: 1200px;
     h1 { font-size: 2.5rem; margin-bottom: 5px; color: #DE5499; font-weight: 900; }
     p { font-size: 1.1rem; color: #555; }
   }
 
-  .view_expenses_btn, .view_balances_btn, .view_settlements_btn {
+  .view_expenses_btn, .view_balances_btn, .view_settlements_btn, .import_csv_btn {
     background: #264143;
     color: #fff;
     border: 2px solid #264143;
@@ -240,6 +247,11 @@ const Wrapper = styled.div`
     border-color: #E99F4C;
     color: #264143;
   }
+  
+  .import_csv_btn {
+    background: #0d8a43;
+    border-color: #0d8a43;
+  }
 
   .back_btn {
     background: none;
@@ -251,6 +263,7 @@ const Wrapper = styled.div`
     margin-bottom: 20px;
     padding: 0;
     text-decoration: underline;
+    display: block;
   }
 
   .content_grid {
@@ -258,6 +271,7 @@ const Wrapper = styled.div`
     grid-template-columns: 1fr 1fr;
     gap: 30px;
     max-width: 1200px;
+    margin: 0 auto;
   }
 
   .card {
