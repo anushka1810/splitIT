@@ -2,8 +2,19 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
+const nodemailer = require('nodemailer');
 const prisma = require('./prismaClient');
 const authenticateToken = require('./middleware/auth');
+
+// Transporter setup for sending emails
+const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+    }
+});
 
 const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_key_for_development';
 
@@ -144,6 +155,81 @@ app.get('/api/me', authenticateToken, async (req, res) => {
     }
 });
 
+// Forgot Password API
+app.post('/api/forgot-password', async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) return res.status(400).json({ error: 'Email is required.' });
+
+        const user = await prisma.user.findUnique({ where: { email } });
+        if (!user) {
+            // Return success even if user not found to prevent email enumeration
+            return res.status(200).json({ message: 'If that email is registered, a reset link has been sent.' });
+        }
+
+        const resetToken = crypto.randomBytes(32).toString('hex');
+        const resetTokenExpiry = new Date(Date.now() + 3600000); // 1 hour from now
+
+        await prisma.user.update({
+            where: { email },
+            data: { resetToken, resetTokenExpiry }
+        });
+
+        const resetLink = `http://localhost:5173/reset-password?token=${resetToken}`;
+        
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
+            to: email,
+            subject: 'Password Reset Request',
+            html: `<p>You requested a password reset. Click the link below to set a new password:</p>
+                   <p><a href="${resetLink}">${resetLink}</a></p>
+                   <p>If you did not request this, please ignore this email.</p>`
+        };
+
+        await transporter.sendMail(mailOptions);
+        res.status(200).json({ message: 'If that email is registered, a reset link has been sent.' });
+    } catch (error) {
+        console.error('Error in forgot-password:', error);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// Reset Password API
+app.post('/api/reset-password', async (req, res) => {
+    try {
+        const { token, newPassword } = req.body;
+        if (!token || !newPassword) return res.status(400).json({ error: 'Token and new password are required.' });
+        if (newPassword.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters long.' });
+
+        const user = await prisma.user.findFirst({
+            where: {
+                resetToken: token,
+                resetTokenExpiry: { gt: new Date() }
+            }
+        });
+
+        if (!user) {
+            return res.status(400).json({ error: 'Invalid or expired reset token.' });
+        }
+
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+        await prisma.user.update({
+            where: { id: user.id },
+            data: {
+                password: hashedPassword,
+                resetToken: null,
+                resetTokenExpiry: null
+            }
+        });
+
+        res.status(200).json({ message: 'Password reset successfully.' });
+    } catch (error) {
+        console.error('Error in reset-password:', error);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
 app.listen(3000, () => {
     console.log(`Server running on port 3000`);
 });
@@ -157,4 +243,4 @@ process.on('uncaughtException', (err) => {
     console.error('Uncaught Exception:', err);
 });
 
-module.exports = app;
+module.exports = app; 
