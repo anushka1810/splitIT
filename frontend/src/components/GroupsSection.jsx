@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
 import axios from 'axios';
 
 const GroupsSection = () => {
+  const navigate = useNavigate();
   const [groups, setGroups] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -115,13 +117,18 @@ const GroupsSection = () => {
           {groups.map((group) => {
             const isCreator = group.creator.id === user.id;
             return (
-              <div key={group.id} className="group_card">
+              <div 
+                key={group.id} 
+                className="group_card" 
+                onClick={() => navigate(`/groups/${group.id}`)}
+                style={{ cursor: 'pointer' }}
+              >
                 <div className="group_header">
                   <h3>{group.name}</h3>
                   {isCreator && (
-                    <div className="actions">
-                      <button className="icon_btn edit_btn" onClick={() => openEditModal(group)}>Edit</button>
-                      <button className="icon_btn delete_btn" onClick={() => handleDelete(group.id)}>Delete</button>
+                    <div className="actions" onClick={(e) => e.stopPropagation()}>
+                      <button className="icon_btn edit_btn" onClick={(e) => { e.stopPropagation(); openEditModal(group); }}>Edit</button>
+                      <button className="icon_btn delete_btn" onClick={(e) => { e.stopPropagation(); handleDelete(group.id); }}>Delete</button>
                     </div>
                   )}
                 </div>
@@ -233,6 +240,10 @@ const SectionWrapper = styled.div`
     border-radius: 16px;
     padding: 20px;
     box-shadow: 3px 4px 0px 1px #E99F4C;
+    transition: transform 0.2s;
+  }
+  .group_card:hover {
+    transform: translateY(-3px);
   }
 
   .group_header {

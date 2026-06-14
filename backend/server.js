@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 const prisma = require('./prismaClient');
 const authenticateToken = require('./middleware/auth');
+const { calculateGroupBalances, calculateIndividualBreakdown } = require('./utils/balanceEngine');
 
 // Transporter setup for sending emails
 const transporter = nodemailer.createTransport({
@@ -358,6 +359,468 @@ app.delete('/api/groups/:id', authenticateToken, async (req, res) => {
         res.status(200).json({ message: 'Group deleted successfully.' });
     } catch (error) {
         console.error('Error deleting group:', error);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// =======================
+// MEMBERSHIP TIMELINE APIs
+// =======================
+
+// Add a member to a group
+app.post('/api/groups/:groupId/members', authenticateToken, async (req, res) => {
+    try {
+        const groupId = parseInt(req.params.groupId);
+        const { email } = req.body;
+
+        if (!email) return res.status(400).json({ error: 'User email is required.' });
+
+        // 1. Check if the requester is part of this group (creator or active member)
+        const group = await prisma.group.findUnique({
+            where: { id: groupId },
+            include: { members: { where: { leftAt: null } } }
+        });
+
+        if (!group) return res.status(404).json({ error: 'Group not found.' });
+
+        const isAuthorized = group.createdBy === req.user.id || group.members.some(m => m.userId === req.user.id);
+        if (!isAuthorized) return res.status(403).json({ error: 'You are not authorized to add members to this group.' });
+
+        // 2. Find the user to add
+        const userToAdd = await prisma.user.findUnique({ where: { email } });
+        if (!userToAdd) return res.status(404).json({ error: 'User not found.' });
+
+        // 3. Check if user is already an active member
+        const activeMembership = await prisma.groupMember.findFirst({
+            where: {
+                groupId,
+                userId: userToAdd.id,
+                leftAt: null
+            }
+        });
+
+        if (activeMembership) {
+            return res.status(400).json({ error: 'User is already an active member of this group.' });
+        }
+
+        // 4. Add the user (creates a new row to preserve timeline if they joined multiple times)
+        const newMember = await prisma.groupMember.create({
+            data: {
+                groupId,
+                userId: userToAdd.id,
+                joinedAt: new Date()
+            },
+            include: { user: { select: { id: true, name: true, email: true } } }
+        });
+
+        res.status(201).json({ message: 'Member added successfully.', member: newMember });
+    } catch (error) {
+        console.error('Error adding member:', error);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// Remove a member from a group (Updates leftAt)
+app.patch('/api/groups/:groupId/members/:memberId/remove', authenticateToken, async (req, res) => {
+    try {
+        const groupId = parseInt(req.params.groupId);
+        const memberId = parseInt(req.params.memberId); // This is the userId
+
+        // 1. Check authorization (creator or self)
+        const group = await prisma.group.findUnique({ where: { id: groupId } });
+        if (!group) return res.status(404).json({ error: 'Group not found.' });
+
+        const isAuthorized = group.createdBy === req.user.id || req.user.id === memberId;
+        if (!isAuthorized) return res.status(403).json({ error: 'Not authorized to remove this member.' });
+
+        // 2. Find active membership
+        const activeMembership = await prisma.groupMember.findFirst({
+            where: {
+                groupId,
+                userId: memberId,
+                leftAt: null
+            }
+        });
+
+        if (!activeMembership) {
+            return res.status(404).json({ error: 'Active membership not found for this user.' });
+        }
+
+        // 3. Update leftAt (do not delete row)
+        await prisma.groupMember.update({
+            where: { id: activeMembership.id },
+            data: { leftAt: new Date() }
+        });
+
+        res.status(200).json({ message: 'Member removed successfully.' });
+    } catch (error) {
+        console.error('Error removing member:', error);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// Get members timeline data
+app.get('/api/groups/:groupId/members', authenticateToken, async (req, res) => {
+    try {
+        const groupId = parseInt(req.params.groupId);
+
+        // Check if requester has access
+        const groupAccess = await prisma.group.findFirst({
+            where: {
+                id: groupId,
+                OR: [
+                    { createdBy: req.user.id },
+                    { members: { some: { userId: req.user.id } } } // Allow access if they ever were a member
+                ]
+            }
+        });
+
+        if (!groupAccess) return res.status(403).json({ error: 'Access denied.' });
+
+        // Fetch all membership records
+        const membersRecords = await prisma.groupMember.findMany({
+            where: { groupId },
+            include: { user: { select: { id: true, name: true, email: true } } },
+            orderBy: { joinedAt: 'asc' }
+        });
+
+        const currentMembers = membersRecords.filter(m => m.leftAt === null);
+        const formerMembers = membersRecords.filter(m => m.leftAt !== null);
+
+        // Build chronological timeline history
+        let membershipHistory = [];
+        membersRecords.forEach(record => {
+            membershipHistory.push({
+                type: 'joined',
+                date: record.joinedAt,
+                userName: record.user.name,
+                message: `${record.user.name} joined the group`
+            });
+
+            if (record.leftAt) {
+                membershipHistory.push({
+                    type: 'left',
+                    date: record.leftAt,
+                    userName: record.user.name,
+                    message: `${record.user.name} left the group`
+                });
+            }
+        });
+
+        // Sort timeline by date
+        membershipHistory.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+        res.status(200).json({
+            currentMembers,
+            formerMembers,
+            membershipHistory
+        });
+    } catch (error) {
+        console.error('Error fetching members:', error);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// =======================
+// EXPENSE MANAGEMENT APIs
+// =======================
+
+// Create an expense
+app.post('/api/groups/:groupId/expenses', authenticateToken, async (req, res) => {
+    try {
+        const groupId = parseInt(req.params.groupId);
+        const { description, amount, currency, expenseDate, splitType, notes, payerId, participants } = req.body;
+
+        // General Validations
+        if (!description || !amount || !currency || !expenseDate || !splitType || !payerId || !participants) {
+            return res.status(400).json({ error: 'All required fields must be provided.' });
+        }
+        if (amount <= 0) {
+            return res.status(400).json({ error: 'Amount must be greater than zero.' });
+        }
+
+        // Verify group access and payer membership
+        const group = await prisma.group.findUnique({
+            where: { id: groupId },
+            include: { members: { where: { leftAt: null } } } // active members
+        });
+
+        if (!group) return res.status(404).json({ error: 'Group not found.' });
+        
+        const isRequesterMember = group.members.some(m => m.userId === req.user.id) || group.createdBy === req.user.id;
+        if (!isRequesterMember) return res.status(403).json({ error: 'Access denied.' });
+
+        const isPayerMember = group.members.some(m => m.userId === payerId);
+        if (!isPayerMember) return res.status(400).json({ error: 'Payer must be an active group member.' });
+
+        // Split Logic Validation
+        let validatedParticipants = [];
+        if (splitType === 'EQUAL') {
+            const splitAmount = amount / participants.length;
+            validatedParticipants = participants.map(p => ({
+                userId: p.userId,
+                shareValue: null // Keep null for EQUAL to calculate dynamically on frontend
+            }));
+        } else if (splitType === 'EXACT') {
+            const totalExact = participants.reduce((sum, p) => sum + (p.shareValue || 0), 0);
+            if (Math.abs(totalExact - amount) > 0.01) { // Floating point tolerance
+                return res.status(400).json({ error: 'Sum of exact amounts must equal total expense amount.' });
+            }
+            validatedParticipants = participants.map(p => ({ userId: p.userId, shareValue: p.shareValue }));
+        } else if (splitType === 'PERCENTAGE') {
+            const totalPercent = participants.reduce((sum, p) => sum + (p.shareValue || 0), 0);
+            if (Math.abs(totalPercent - 100) > 0.01) {
+                return res.status(400).json({ error: 'Sum of percentages must equal 100.' });
+            }
+            validatedParticipants = participants.map(p => ({ userId: p.userId, shareValue: p.shareValue }));
+        } else {
+            return res.status(400).json({ error: 'Invalid split type.' });
+        }
+
+        // Create Expense and Participants in a transaction
+        const newExpense = await prisma.$transaction(async (tx) => {
+            const expense = await tx.expense.create({
+                data: {
+                    description,
+                    amount,
+                    currency,
+                    expenseDate: new Date(expenseDate),
+                    splitType,
+                    notes,
+                    groupId,
+                    payerId,
+                    createdBy: req.user.id
+                }
+            });
+
+            await tx.expenseParticipant.createMany({
+                data: validatedParticipants.map(p => ({
+                    expenseId: expense.id,
+                    userId: p.userId,
+                    shareValue: p.shareValue
+                }))
+            });
+
+            return expense;
+        });
+
+        res.status(201).json({ message: 'Expense created successfully.', expense: newExpense });
+    } catch (error) {
+        console.error('Error creating expense:', error);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// Get all expenses for a group
+app.get('/api/groups/:groupId/expenses', authenticateToken, async (req, res) => {
+    try {
+        const groupId = parseInt(req.params.groupId);
+        
+        const groupAccess = await prisma.group.findFirst({
+            where: {
+                id: groupId,
+                OR: [
+                    { createdBy: req.user.id },
+                    { members: { some: { userId: req.user.id } } }
+                ]
+            }
+        });
+        if (!groupAccess) return res.status(403).json({ error: 'Access denied.' });
+
+        const expenses = await prisma.expense.findMany({
+            where: { groupId },
+            include: {
+                payer: { select: { id: true, name: true } },
+                creator: { select: { id: true, name: true } },
+                participants: {
+                    include: { user: { select: { id: true, name: true } } }
+                }
+            },
+            orderBy: { expenseDate: 'desc' }
+        });
+
+        res.status(200).json({ expenses });
+    } catch (error) {
+        console.error('Error fetching expenses:', error);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// Get specific expense
+app.get('/api/expenses/:expenseId', authenticateToken, async (req, res) => {
+    try {
+        const expenseId = parseInt(req.params.expenseId);
+
+        const expense = await prisma.expense.findUnique({
+            where: { id: expenseId },
+            include: {
+                group: { include: { members: true } },
+                payer: { select: { id: true, name: true } },
+                creator: { select: { id: true, name: true } },
+                participants: {
+                    include: { user: { select: { id: true, name: true } } }
+                }
+            }
+        });
+
+        if (!expense) return res.status(404).json({ error: 'Expense not found.' });
+
+        const isAuthorized = expense.group.createdBy === req.user.id || expense.group.members.some(m => m.userId === req.user.id);
+        if (!isAuthorized) return res.status(403).json({ error: 'Access denied.' });
+
+        res.status(200).json({ expense });
+    } catch (error) {
+        console.error('Error fetching expense:', error);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// Update expense
+app.put('/api/expenses/:expenseId', authenticateToken, async (req, res) => {
+    try {
+        const expenseId = parseInt(req.params.expenseId);
+        const { description, amount, currency, expenseDate, splitType, notes, payerId, participants } = req.body;
+
+        const expense = await prisma.expense.findUnique({ where: { id: expenseId } });
+        if (!expense) return res.status(404).json({ error: 'Expense not found.' });
+
+        // Only creator or payer can edit
+        if (expense.createdBy !== req.user.id && expense.payerId !== req.user.id) {
+            return res.status(403).json({ error: 'Only the creator or payer can edit this expense.' });
+        }
+
+        // Split Logic Validation (Same as creation)
+        let validatedParticipants = [];
+        if (splitType === 'EQUAL') {
+            validatedParticipants = participants.map(p => ({ userId: p.userId, shareValue: null }));
+        } else if (splitType === 'EXACT') {
+            const totalExact = participants.reduce((sum, p) => sum + (p.shareValue || 0), 0);
+            if (Math.abs(totalExact - amount) > 0.01) return res.status(400).json({ error: 'Sum of exact amounts must equal total expense amount.' });
+            validatedParticipants = participants.map(p => ({ userId: p.userId, shareValue: p.shareValue }));
+        } else if (splitType === 'PERCENTAGE') {
+            const totalPercent = participants.reduce((sum, p) => sum + (p.shareValue || 0), 0);
+            if (Math.abs(totalPercent - 100) > 0.01) return res.status(400).json({ error: 'Sum of percentages must equal 100.' });
+            validatedParticipants = participants.map(p => ({ userId: p.userId, shareValue: p.shareValue }));
+        }
+
+        // Transaction to delete old participants and insert new, while updating expense
+        await prisma.$transaction(async (tx) => {
+            await tx.expenseParticipant.deleteMany({ where: { expenseId } });
+            
+            await tx.expense.update({
+                where: { id: expenseId },
+                data: {
+                    description, amount, currency, splitType, notes, payerId,
+                    expenseDate: new Date(expenseDate)
+                }
+            });
+
+            await tx.expenseParticipant.createMany({
+                data: validatedParticipants.map(p => ({
+                    expenseId, userId: p.userId, shareValue: p.shareValue
+                }))
+            });
+        });
+
+        res.status(200).json({ message: 'Expense updated successfully.' });
+    } catch (error) {
+        console.error('Error updating expense:', error);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// Delete expense
+app.delete('/api/expenses/:expenseId', authenticateToken, async (req, res) => {
+    try {
+        const expenseId = parseInt(req.params.expenseId);
+
+        const expense = await prisma.expense.findUnique({ where: { id: expenseId } });
+        if (!expense) return res.status(404).json({ error: 'Expense not found.' });
+
+        if (expense.createdBy !== req.user.id && expense.payerId !== req.user.id) {
+            return res.status(403).json({ error: 'Only the creator or payer can delete this expense.' });
+        }
+
+        await prisma.expense.delete({ where: { id: expenseId } });
+        res.status(200).json({ message: 'Expense deleted successfully.' });
+    } catch (error) {
+        console.error('Error deleting expense:', error);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// =======================
+// BALANCE ENGINE APIs
+// =======================
+
+// Get all balances for a group
+app.get('/api/groups/:groupId/balances', authenticateToken, async (req, res) => {
+    try {
+        const groupId = parseInt(req.params.groupId);
+
+        // Verify group access
+        const group = await prisma.group.findUnique({
+            where: { id: groupId },
+            include: { members: { include: { user: true } } }
+        });
+
+        if (!group) return res.status(404).json({ error: 'Group not found.' });
+
+        const isMember = group.members.some(m => m.userId === req.user.id) || group.createdBy === req.user.id;
+        if (!isMember) return res.status(403).json({ error: 'Access denied.' });
+
+        // Fetch all expenses involving the group
+        const expenses = await prisma.expense.findMany({
+            where: { groupId },
+            include: { participants: true }
+        });
+
+        // Use pure utility
+        const balances = calculateGroupBalances(expenses, group.members);
+
+        res.status(200).json({ members: balances });
+    } catch (error) {
+        console.error('Error fetching group balances:', error);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+// Get individual detailed balance breakdown
+app.get('/api/groups/:groupId/balances/:userId', authenticateToken, async (req, res) => {
+    try {
+        const groupId = parseInt(req.params.groupId);
+        const targetUserId = parseInt(req.params.userId);
+
+        // Verify group access
+        const group = await prisma.group.findUnique({
+            where: { id: groupId },
+            include: { members: { include: { user: true } } }
+        });
+
+        if (!group) return res.status(404).json({ error: 'Group not found.' });
+
+        const isMember = group.members.some(m => m.userId === req.user.id) || group.createdBy === req.user.id;
+        if (!isMember) return res.status(403).json({ error: 'Access denied.' });
+
+        const targetUser = group.members.find(m => m.userId === targetUserId)?.user;
+        if (!targetUser) return res.status(404).json({ error: 'User is not a member of this group.' });
+
+        // Fetch all expenses involving the group
+        const expenses = await prisma.expense.findMany({
+            where: { groupId },
+            include: { 
+                payer: { select: { name: true } },
+                participants: true 
+            },
+            orderBy: { expenseDate: 'desc' }
+        });
+
+        // Use pure utility
+        const breakdown = calculateIndividualBreakdown(targetUserId, targetUser, expenses);
+
+        res.status(200).json(breakdown);
+    } catch (error) {
+        console.error('Error fetching individual balance breakdown:', error);
         res.status(500).json({ error: 'Internal server error.' });
     }
 });
