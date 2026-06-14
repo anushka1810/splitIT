@@ -1,7 +1,10 @@
 const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 const prisma = require('./prismaClient');
+
+const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_key_for_development';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -70,8 +73,59 @@ app.post('/api/register', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+// Login API
+app.post('/api/login', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+
+        // Validation
+        if (!email || !password) {
+            return res.status(400).json({ error: 'Email and password are required.' });
+        }
+
+        // Find user by email
+        const user = await prisma.user.findUnique({
+            where: { email }
+        });
+
+        // If user not found
+        if (!user) {
+            return res.status(401).json({ error: 'Invalid email or password.' });
+        }
+
+        // Compare password
+        const isPasswordValid = await bcrypt.compare(password, user.password);
+
+        if (!isPasswordValid) {
+            return res.status(401).json({ error: 'Invalid email or password.' });
+        }
+
+        // Generate JWT token
+        const token = jwt.sign(
+            { id: user.id, email: user.email },
+            JWT_SECRET,
+            { expiresIn: '24h' }
+        );
+
+        // Return token and user details (excluding password)
+        res.status(200).json({
+            message: 'Login successful',
+            token,
+            user: {
+                id: user.id,
+                name: user.name,
+                email: user.email,
+                createdAt: user.createdAt
+            }
+        });
+    } catch (error) {
+        console.error('Error during login:', error);
+        res.status(500).json({ error: 'Internal server error.' });
+    }
+});
+
+app.listen(3000, () => {
+    console.log(`Server running on port 3000`);
 });
 
 module.exports = app;
