@@ -62,6 +62,43 @@ const GroupBalances = () => {
   if (loading) return <Wrapper><div className="loading">Calculating Balances...</div></Wrapper>;
   if (error) return <Wrapper><div className="error">{error}</div><button onClick={() => navigate(`/groups/${groupId}`)}>Back</button></Wrapper>;
 
+  const calculateSuggestedSettlements = () => {
+      // Use netBalance (after settlements) or balanceBeforeSettlements depending on toggle
+      let debtors = balances
+          .map(m => ({ name: m.name, debt: -(showBeforeSettlements ? m.balanceBeforeSettlements : m.netBalance) }))
+          .filter(m => m.debt > 0.01)
+          .sort((a,b) => b.debt - a.debt);
+          
+      let creditors = balances
+          .map(m => ({ name: m.name, credit: (showBeforeSettlements ? m.balanceBeforeSettlements : m.netBalance) }))
+          .filter(m => m.credit > 0.01)
+          .sort((a,b) => b.credit - a.credit);
+          
+      const suggestions = [];
+      let i = 0, j = 0;
+      
+      while(i < debtors.length && j < creditors.length) {
+          let debtor = debtors[i];
+          let creditor = creditors[j];
+          let amount = Math.min(debtor.debt, creditor.credit);
+          
+          suggestions.push({
+              from: debtor.name,
+              to: creditor.name,
+              amount: amount
+          });
+          
+          debtor.debt -= amount;
+          creditor.credit -= amount;
+          
+          if (debtor.debt < 0.01) i++;
+          if (creditor.credit < 0.01) j++;
+      }
+      return suggestions;
+  };
+
+  const suggestedSettlements = calculateSuggestedSettlements();
+
   return (
     <Wrapper>
       <header className="header">
@@ -121,6 +158,22 @@ const GroupBalances = () => {
                     })}
                 </div>
             )}
+          </section>
+
+          <section className="card" style={{ marginTop: '20px' }}>
+              <h2>Aisha's View: Suggested Settlements</h2>
+              <p style={{ color: '#666', marginBottom: '15px' }}>"I just want one number per person. Who pays whom, how much, done."</p>
+              {suggestedSettlements.length === 0 ? (
+                  <div className="empty_state" style={{ padding: '20px' }}>Everyone is fully settled up! 🎉</div>
+              ) : (
+                  <ul className="settlement_plan_list">
+                      {suggestedSettlements.map((s, idx) => (
+                          <li key={idx}>
+                              <strong>{s.from}</strong> owes <strong>{s.to}</strong> <span className="amount">₹{s.amount.toFixed(2)}</span>
+                          </li>
+                      ))}
+                  </ul>
+              )}
           </section>
         </div>
 
@@ -313,6 +366,27 @@ const Wrapper = styled.div`
     border-radius: 16px;
     color: #777;
     font-size: 1.2rem;
+  }
+
+  .settlement_plan_list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      
+      li {
+          background: #fff8f0;
+          border: 1px solid #E99F4C;
+          padding: 15px;
+          border-radius: 8px;
+          margin-bottom: 10px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          font-size: 1.1rem;
+
+          strong { color: #264143; }
+          .amount { font-weight: 900; color: #d93025; font-size: 1.2rem; }
+      }
   }
 
   .stats_row {
