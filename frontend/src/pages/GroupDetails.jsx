@@ -19,7 +19,7 @@ const GroupDetails = () => {
   const currentUser = JSON.parse(localStorage.getItem('user'));
 
   const api = axios.create({
-    baseURL: '/api',
+    baseURL: import.meta.env.VITE_API_URL || '/api',
     headers: { Authorization: `Bearer ${token}` }
   });
 

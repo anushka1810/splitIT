@@ -3,6 +3,8 @@ import styled from 'styled-components';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 
+const API_BASE = (import.meta.env.VITE_API_URL || '/api');
+
 const Form = () => {
   const navigate = useNavigate();
   const [isLogin, setIsLogin] = useState(true);
@@ -27,7 +29,7 @@ const Form = () => {
       }
       setLoading(true);
       try {
-        const response = await axios.post('/api/forgot-password', { email });
+        const response = await axios.post(`${API_BASE}/forgot-password`, { email });
         setSuccess(response.data.message || 'If that email is registered, a reset link has been sent.');
       } catch (err) {
         setError(err.response?.data?.error || 'An error occurred. Please try again.');
@@ -45,12 +47,12 @@ const Form = () => {
     setLoading(true);
     try {
       if (isLogin) {
-        const response = await axios.post('/api/login', { email, password });
+        const response = await axios.post(`${API_BASE}/login`, { email, password });
         localStorage.setItem('token', response.data.token);
         localStorage.setItem('user', JSON.stringify(response.data.user));
         navigate('/dashboard');
       } else {
-        await axios.post('/api/register', { name, email, password });
+        await axios.post(`${API_BASE}/register`, { name, email, password });
         setIsLogin(true);
         setName('');
         setPassword('');

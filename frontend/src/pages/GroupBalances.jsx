@@ -18,7 +18,7 @@ const GroupBalances = () => {
 
   const token = localStorage.getItem('token');
   const api = axios.create({
-    baseURL: '/api',
+    baseURL: import.meta.env.VITE_API_URL || '/api',
     headers: { Authorization: `Bearer ${token}` }
   });
 
