@@ -1,12 +1,21 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
+import axios from 'axios';
 import GroupsSection from '../components/GroupsSection';
 
 const Dashboard = () => {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
   const [activeSection, setActiveSection] = useState('Dashboard');
+
+  const [stats, setStats] = useState({
+    totalGroups: 0,
+    totalExpenses: 0,
+    netBalance: 0,
+    recentActivity: []
+  });
+  const [loadingStats, setLoadingStats] = useState(true);
 
   useEffect(() => {
     const token = localStorage.getItem('token');
@@ -16,18 +25,28 @@ const Dashboard = () => {
       return;
     }
     if (userData) setUser(JSON.parse(userData));
+
+    const fetchStats = async () => {
+      try {
+        const api = axios.create({
+          baseURL: import.meta.env.VITE_API_URL || '/api',
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const res = await api.get('/stats');
+        setStats(res.data);
+      } catch (err) {
+        console.error('Failed to fetch stats:', err);
+      } finally {
+        setLoadingStats(false);
+      }
+    };
+    fetchStats();
   }, [navigate]);
 
   const handleLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     navigate('/login');
-  };
-
-  const stats = {
-    totalGroups: 4,
-    totalExpenses: "$1,240.50",
-    pendingSettlements: 3
   };
 
   const renderContent = () => {
@@ -74,7 +93,7 @@ const Dashboard = () => {
                 </div>
                 <div className="card_info">
                   <h3>Total Groups</h3>
-                  <p className="card_value">{stats.totalGroups}</p>
+                  <p className="card_value">{loadingStats ? '...' : stats.totalGroups}</p>
                 </div>
               </div>
 
@@ -84,7 +103,7 @@ const Dashboard = () => {
                 </div>
                 <div className="card_info">
                   <h3>Total Expenses</h3>
-                  <p className="card_value">{stats.totalExpenses}</p>
+                  <p className="card_value">{loadingStats ? '...' : `$${Math.abs(stats.totalExpenses).toFixed(2)}`}</p>
                 </div>
               </div>
 
@@ -93,17 +112,38 @@ const Dashboard = () => {
                   <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
                 </div>
                 <div className="card_info">
-                  <h3>Pending Settlements</h3>
-                  <p className="card_value">{stats.pendingSettlements}</p>
+                  <h3>Net Balance</h3>
+                  <p className="card_value" style={{ color: stats.netBalance < 0 ? '#DE5499' : (stats.netBalance > 0 ? '#1a7a4a' : '#264143') }}>
+                    {loadingStats ? '...' : (stats.netBalance < 0 ? `-$${Math.abs(stats.netBalance).toFixed(2)}` : `+$${stats.netBalance.toFixed(2)}`)}
+                  </p>
                 </div>
               </div>
             </div>
 
             <div className="recent_activity">
-              <h2>Recent Activity (Coming Soon)</h2>
-              <div className="activity_placeholder">
-                <p>Your recent transactions will appear here.</p>
-              </div>
+              <h2>Recent Activity</h2>
+              {loadingStats ? (
+                <div className="activity_placeholder"><p>Loading activity...</p></div>
+              ) : stats.recentActivity && stats.recentActivity.length > 0 ? (
+                <div className="activity_list">
+                  {stats.recentActivity.map(act => (
+                    <div key={act.id} className="activity_item">
+                      <div className="activity_icon">{act.type === 'SETTLEMENT' ? '💸' : '🛒'}</div>
+                      <div className="activity_details">
+                        <h4>{act.description}</h4>
+                        <p>{new Date(act.date).toLocaleDateString()} • {act.type === 'SETTLEMENT' ? 'Settlement' : `Paid by ${act.payer}`}</p>
+                      </div>
+                      <div className={`activity_amount ${act.impact > 0 ? 'positive' : act.impact < 0 ? 'negative' : 'neutral'}`}>
+                        {act.impact > 0 ? '+' : ''}{act.impact.toFixed(2)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="activity_placeholder">
+                  <p>No recent activity found.</p>
+                </div>
+              )}
             </div>
           </div>
         );
@@ -310,6 +350,60 @@ const Wrapper = styled.div`
     color: #777;
     font-weight: 600;
   }
+
+  .activity_list {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+  }
+
+  .activity_item {
+    background: #fff;
+    border: 2px solid #264143;
+    border-radius: 12px;
+    padding: 15px 20px;
+    display: flex;
+    align-items: center;
+    box-shadow: 3px 3px 0px 0px #E99F4C;
+  }
+
+  .activity_icon {
+    font-size: 24px;
+    margin-right: 15px;
+    background: #f0f0f0;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    border-radius: 50%;
+    border: 1px solid #264143;
+  }
+
+  .activity_details {
+    flex: 1;
+  }
+
+  .activity_details h4 {
+    margin: 0 0 5px 0;
+    color: #264143;
+    font-weight: 700;
+  }
+
+  .activity_details p {
+    margin: 0;
+    font-size: 0.9em;
+    color: #666;
+  }
+
+  .activity_amount {
+    font-weight: 800;
+    font-size: 1.1em;
+  }
+
+  .activity_amount.positive { color: #1a7a4a; }
+  .activity_amount.negative { color: #d93025; }
+  .activity_amount.neutral { color: #264143; }
 `;
 
 export default Dashboard;

@@ -185,6 +185,39 @@ app.get('/api/me', authenticateToken, async (req, res) => {
     }
 });
 
+// Dashboard Stats API
+app.get('/api/stats', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const user = await prisma.user.findUnique({ where: { id: userId }});
+        if (!user) return res.status(404).json({ error: 'User not found' });
+
+        const groupsCount = await prisma.groupMember.count({ where: { userId } });
+
+        const expenses = await prisma.expense.findMany({
+            where: { OR: [{ payerId: userId }, { participants: { some: { userId } } }] },
+            include: { payer: true, participants: true }
+        });
+
+        const settlements = await prisma.settlement.findMany({
+            where: { OR: [{ payerId: userId }, { receiverId: userId }] },
+            include: { payer: true, receiver: true }
+        });
+
+        const breakdownData = calculateIndividualBreakdown(userId, user, expenses, settlements);
+
+        res.status(200).json({
+            totalGroups: groupsCount,
+            totalExpenses: breakdownData.totalOwed,
+            netBalance: breakdownData.netBalance,
+            recentActivity: breakdownData.breakdown.slice(0, 5)
+        });
+    } catch (error) {
+        console.error('Error fetching stats:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
+});
+
 // Forgot Password API
 app.post('/api/forgot-password', async (req, res) => {
     try {
