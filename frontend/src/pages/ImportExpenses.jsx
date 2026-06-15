@@ -543,43 +543,80 @@ const ImportExpenses = () => {
                             )
                         })}
 
-                        {/* A15 & A16: Duplicates */}
-                        {tier4.exactDuplicates.map(row => (
+                        {/* A15: Exact Duplicates */}
+                        {tier4.exactDuplicates.map(row => {
+                            const originalHasNote = !!row.conflictRef?.row?.notes;
+                            const thisHasNote = !!row.notes;
+                            let recommendation = "Review carefully.";
+                            let recommendedAction = null;
+                            if (originalHasNote && !thisHasNote) {
+                                recommendation = "Keep Original (it has more info in notes) and delete this one.";
+                                recommendedAction = 'skip';
+                            } else if (thisHasNote && !originalHasNote) {
+                                recommendation = "Keep This Version (it has more info in notes) and delete the original.";
+                                recommendedAction = 'keep';
+                            }
+
+                            return (
                             <div key={row.id} className="card anomaly_card duplicate">
                                 <h3>⚠️ Exact Duplicate</h3>
                                 <p className="desc">{row.description} - ₹{row.amount}</p>
-                                <p className="note">This row has the exact same fingerprint as another row.</p>
+                                <p className="note">This row has the exact same fingerprint as a previously parsed row.</p>
+                                <p className="note" style={{ color: '#0056b3', fontWeight: 'bold' }}>💡 Policy Recommendation: {recommendation}</p>
                                 <div className="actions">
-                                    <button className="btn primary" onClick={() => skipRow('exactDuplicates', row.id)}>Keep One (Delete)</button>
-                                    <button className="btn outline" onClick={() => resolveToValid('exactDuplicates', row.id)}>Keep Both</button>
+                                    <button className={`btn ${recommendedAction === 'skip' ? 'primary' : 'outline'}`} onClick={() => skipRow('exactDuplicates', row.id)}>
+                                        {recommendedAction === 'skip' ? '(Recommended) Delete This Duplicate' : 'Delete This Duplicate'}
+                                    </button>
+                                    <button className={`btn ${recommendedAction === 'keep' ? 'primary' : 'outline'}`} onClick={() => resolveToValid('exactDuplicates', row.id)}>
+                                        {recommendedAction === 'keep' ? '(Recommended) Keep This (Delete Original)' : 'Keep This (Delete Original)'}
+                                    </button>
                                     <button className="btn danger" onClick={() => {
                                         setResolvedValid(prev => prev.filter(r => r.description !== row.description || r.amount !== row.amount));
                                         skipRow('exactDuplicates', row.id);
                                     }}>Skip Both</button>
                                 </div>
                             </div>
-                        ))}
+                            )
+                        })}
 
                         {/* A24 & A25: Conflicting Duplicates */}
-                        {tier4.conflictingDuplicates.map(row => (
+                        {tier4.conflictingDuplicates.map(row => {
+                            const noteText = (row.notes || '').toLowerCase();
+                            const refNoteText = (row.conflictRef?.row?.notes || '').toLowerCase();
+                            
+                            let recommendation = "Review both versions.";
+                            let recommendedAction = null;
+
+                            if (noteText.includes('wrong') || noteText.includes('mistake')) {
+                                recommendation = "Trust the note author. This row explicitly mentions an error in the other log. Keep this version.";
+                                recommendedAction = 'keep';
+                            } else if (refNoteText.includes('wrong') || refNoteText.includes('mistake')) {
+                                recommendation = "Trust the note author. The original row explicitly mentions an error in this log. Discard this version.";
+                                recommendedAction = 'skip';
+                            }
+
+                            return (
                             <div key={row.id} className="card anomaly_card duplicate conflict">
                                 <h3>⚠️ Conflicting Duplicate</h3>
                                 <p className="desc">{row.description} - ₹{row.amount} (Paid by {row.payer})</p>
                                 <p className="note">Diff: {row.conflictDiff}</p>
-                                <p className="note">Note: {row.notes || row.conflictRef?.notes}</p>
+                                <p className="note">Note on this row: {row.notes || 'None'}</p>
+                                <p className="note">Note on original row: {row.conflictRef?.row?.notes || 'None'}</p>
+                                <p className="note" style={{ color: '#0056b3', fontWeight: 'bold' }}>💡 Policy Recommendation: {recommendation}</p>
                                 <div className="actions">
-                                    <button className="btn primary" onClick={() => {
+                                    <button className={`btn ${recommendedAction === 'keep' ? 'primary' : 'outline'}`} onClick={() => {
                                         setResolvedValid(prev => prev.filter(r => r.id !== row.conflictRef?.row?.id));
                                         resolveToValid('conflictingDuplicates', row.id);
-                                    }}>Keep This Version</button>
-                                    <button className="btn outline" onClick={() => resolveToValid('conflictingDuplicates', row.id)}>Keep Both</button>
-                                    <button className="btn danger" onClick={() => {
-                                        setResolvedValid(prev => prev.filter(r => r.id !== row.conflictRef?.row?.id));
-                                        skipRow('conflictingDuplicates', row.id);
-                                    }}>Skip Both</button>
+                                    }}>
+                                        {recommendedAction === 'keep' ? '(Recommended) Keep This Version' : 'Keep This Version'}
+                                    </button>
+                                    <button className={`btn ${recommendedAction === 'skip' ? 'primary' : 'outline'}`} onClick={() => skipRow('conflictingDuplicates', row.id)}>
+                                        {recommendedAction === 'skip' ? '(Recommended) Keep Original (Discard This)' : 'Keep Original (Discard This)'}
+                                    </button>
                                 </div>
                             </div>
-                        ))}
+                            )
+                        })}
 
                         {/* A20: Member After Leave */}
                         {tier4.memberAfterLeave.map(row => (

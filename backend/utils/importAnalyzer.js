@@ -154,15 +154,23 @@ function analyzeImport(rows, members, existingExpenses = []) {
 
             if (!isExact) {
                 for (const [key, val] of seenFingerprints.entries()) {
-                    if (key.includes(eventFingerprint) && val.desc === cleanDesc) {
-                        isConflicting = true;
-                        conflictRef = val;
-                        break;
+                    if (key.includes(eventFingerprint)) {
+                        // Fuzzy description check: do they share a significant word?
+                        const words1 = val.desc.split(/\s+/).filter(w => w.length > 3);
+                        const words2 = cleanDesc.split(/\s+/).filter(w => w.length > 3);
+                        const sharesWord = words1.some(w => words2.includes(w)) || val.desc === cleanDesc;
+                        
+                        if (sharesWord) {
+                            isConflicting = true;
+                            conflictRef = val;
+                            break;
+                        }
                     }
                 }
             }
 
             if (isExact) {
+                analyzedRow.conflictRef = seenFingerprints.get(exactFingerprint);
                 results.tier4.exactDuplicates.push(analyzedRow);
                 hasTier4 = true;
             } else if (isConflicting) {
