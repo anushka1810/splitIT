@@ -11,20 +11,23 @@ process.env.DATABASE_URL = dbUrl;
 console.log("Starting deployment process...");
 
 try {
-  // Write the DATABASE_URL to backend/.env so Prisma finds it naturally
-  const envPath = path.join(__dirname, 'backend', '.env');
+  // Write the DATABASE_URL to root .env so Prisma finds it when run from root
+  const rootEnvPath = path.join(__dirname, '.env');
   let envContent = '';
-  if (fs.existsSync(envPath)) {
-    envContent = fs.readFileSync(envPath, 'utf8');
+  if (fs.existsSync(rootEnvPath)) {
+    envContent = fs.readFileSync(rootEnvPath, 'utf8');
   }
-  // Replace or append DATABASE_URL
   if (envContent.includes('DATABASE_URL=')) {
     envContent = envContent.replace(/DATABASE_URL=.*/g, `DATABASE_URL="${dbUrl}"`);
   } else {
     envContent += `\nDATABASE_URL="${dbUrl}"\n`;
   }
-  fs.writeFileSync(envPath, envContent);
-  console.log("Successfully wrote DATABASE_URL to backend/.env");
+  fs.writeFileSync(rootEnvPath, envContent);
+  console.log("Successfully wrote DATABASE_URL to root .env");
+
+  // Also write to backend/.env just in case the server needs it
+  const backendEnvPath = path.join(__dirname, 'backend', '.env');
+  fs.writeFileSync(backendEnvPath, envContent);
 
   console.log("Generating Prisma Client...");
   execSync('node node_modules/prisma/build/index.js generate --schema=backend/prisma/schema.prisma', { stdio: 'inherit' });
