@@ -668,7 +668,8 @@ const ImportExpenses = () => {
                                             const email = prompt(`Enter ${guestStr.replace('Guest: ', '')}'s registered email to add them to the group:`);
                                             if (!email) return;
                                             try {
-                                                const response = await axios.post(`http://localhost:3000/api/groups/${groupId}/members`, { email }, {
+                                                const BASE_URL = import.meta.env.VITE_API_URL || '/api';
+                                                const response = await axios.post(`${BASE_URL}/groups/${groupId}/members`, { email }, {
                                                     headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
                                                 });
                                                 const newUser = response.data.member.user;
