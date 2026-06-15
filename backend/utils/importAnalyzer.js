@@ -11,6 +11,7 @@ function analyzeImport(rows, members, existingExpenses = []) {
             settlements: [],
             deposits: [],
             percentageIssues: [],
+            shareIssues: [],
             guests: [],
             exactDuplicates: [],
             conflictingDuplicates: [],
@@ -195,6 +196,18 @@ function analyzeImport(rows, members, existingExpenses = []) {
             if (!splitType || String(splitType).trim() === '') {
                 analyzedRow.missingSplitType = true;
             }
+
+            // Extract potential receiver
+            const fullText = (desc + " " + notes).toLowerCase();
+            let suggestedReceiver = null;
+            for (const m of memberNames) {
+                if (m.toLowerCase() !== (payerStr || '').toLowerCase() && fullText.includes(m.toLowerCase())) {
+                    suggestedReceiver = m;
+                    break;
+                }
+            }
+            analyzedRow.suggestedReceiver = suggestedReceiver;
+
             // Distinguish A21 (Deposit)
             if (desc.toLowerCase().includes('deposit') || notes.toLowerCase().includes('deposit')) {
                 results.tier4.deposits.push(analyzedRow);
@@ -235,6 +248,31 @@ function analyzeImport(rows, members, existingExpenses = []) {
             if (unknownGuests.length > 0) {
                 analyzedRow.guests = unknownGuests;
                 results.tier4.guests.push(analyzedRow);
+                hasTier4 = true;
+            }
+        }
+
+        // A24: Share-based splits
+        if (String(splitType).toLowerCase().trim() === 'share' && splitDetails) {
+            const parts = splitDetails.split(';');
+            let totalShares = 0;
+            const breakdown = [];
+            const membersArr = splitWith ? splitWith.split(';').map(m=>m.trim()) : [];
+            
+            parts.forEach((p, idx) => {
+                const s = parseFloat(p.trim());
+                if (!isNaN(s)) {
+                    totalShares += s;
+                    const mName = membersArr[idx] || `Member ${idx+1}`;
+                    breakdown.push({ member: mName, shares: s });
+                }
+            });
+            
+            if (totalShares > 0) {
+                analyzedRow.totalShares = totalShares;
+                analyzedRow.shareBreakdown = breakdown;
+                results.tier4.shareIssues = results.tier4.shareIssues || [];
+                results.tier4.shareIssues.push(analyzedRow);
                 hasTier4 = true;
             }
         }

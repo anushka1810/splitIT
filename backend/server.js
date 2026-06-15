@@ -1306,15 +1306,21 @@ app.post('/api/groups/:groupId/imports/commit', authenticateToken, async (req, r
                         amount: exp.amount,
                         currency: exp.currency || 'INR',
                         expenseDate: new Date(exp.expenseDate),
-                        splitType: 'EQUAL',
+                        splitType: exp.splitType || 'EQUAL',
                         groupId: groupId,
                         payerId: exp.payerId,
                         createdBy: req.user.id,
                         notes: 'Imported via CSV',
                         participants: {
-                            create: exp.participantIds.map(userId => ({
-                                userId: userId
-                            }))
+                            create: (exp.participants && exp.participants.length > 0) 
+                                ? exp.participants.map(p => ({
+                                    userId: p.userId,
+                                    shareValue: p.shareValue !== undefined ? p.shareValue : null
+                                })) 
+                                : (exp.participantIds || []).map(userId => ({
+                                    userId: userId,
+                                    shareValue: null
+                                }))
                         }
                     }
                 }));

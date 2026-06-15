@@ -259,13 +259,24 @@ const ImportExpenses = () => {
                 .filter(m => !(r.excludedMembers || []).includes(m.name))
                 .map(m => m.id);
 
+            let finalParticipants = [];
+            if (r.participantDetails) {
+                finalParticipants = r.participantDetails.map(pd => {
+                    const id = findUserId(pd.member) || groupMembers.find(m => m.name === pd.member)?.id;
+                    return { userId: id, shareValue: pd.exactAmount !== undefined ? pd.exactAmount : (pd.percentage !== undefined ? pd.percentage : null) };
+                }).filter(p => p.userId);
+            } else {
+                finalParticipants = participantIds.map(id => ({ userId: id, shareValue: null }));
+            }
+
             return {
                 description: r.description,
                 amount: Math.abs(r.amount),
                 currency: 'INR',
                 expenseDate: r.date || new Date(),
                 payerId: pId,
-                participantIds
+                splitType: r.splitType && ['EQUAL', 'EXACT', 'PERCENTAGE'].includes(r.splitType.toUpperCase()) ? r.splitType.toUpperCase() : 'EQUAL',
+                participants: finalParticipants
             };
         });
 
@@ -505,7 +516,7 @@ const ImportExpenses = () => {
                         {/* A11 & A21: Settlements and Deposits */}
                         {[...tier4.settlements, ...tier4.deposits].map(row => {
                             let pId = findUserId(row.payer) || groupMembers[0]?.id;
-                            let rId = groupMembers[1]?.id;
+                            let rId = findUserId(row.suggestedReceiver) || groupMembers[1]?.id;
                             const isDeposit = tier4.deposits.includes(row);
                             return (
                                 <div key={row.id} className="card anomaly_card">
@@ -524,8 +535,9 @@ const ImportExpenses = () => {
                                             <option disabled>Receiver</option>
                                             {groupMembers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
                                         </select>
-                                        <button className="btn primary" onClick={() => resolveToSettlement(isDeposit ? 'deposits' : 'settlements', row.id, pId, rId)}>Convert</button>
-                                        <button className="btn outline" onClick={() => skipRow(isDeposit ? 'deposits' : 'settlements', row.id)}>Skip</button>
+                                        <button className="btn primary" onClick={() => resolveToSettlement(isDeposit ? 'deposits' : 'settlements', row.id, pId, rId)}>Record as Direct Payment</button>
+                                        <button className="btn outline" onClick={() => resolveToValid(isDeposit ? 'deposits' : 'settlements', row.id)}>Keep as Expense</button>
+                                        <button className="btn danger" onClick={() => skipRow(isDeposit ? 'deposits' : 'settlements', row.id)}>Discard Row</button>
                                     </div>
                                 </div>
                             )
@@ -639,6 +651,11 @@ const ImportExpenses = () => {
                             <PercentageResolverCard key={row.id} row={row} onResolve={(mods) => resolveToValid('percentageIssues', row.id, mods)} />
                         ))}
 
+                        {/* A24: Share Issues */}
+                        {tier4.shareIssues?.map(row => (
+                            <ShareResolverCard key={row.id} row={row} onResolve={(mods) => resolveToValid('shareIssues', row.id, mods)} />
+                        ))}
+
                         {/* A18: Zero Amount */}
                         {tier4.zeroAmounts?.map(row => {
                             let newAmt = 0;
@@ -698,6 +715,42 @@ const ImportExpenses = () => {
     );
 };
 
+const ShareResolverCard = ({ row, onResolve }) => {
+    const totalShares = row.totalShares;
+    const amount = row.amount;
+
+    const exactBreakdown = row.shareBreakdown.map(b => ({
+        member: b.member,
+        exactAmount: parseFloat(((b.shares / totalShares) * amount).toFixed(2))
+    }));
+
+    const handleSave = () => {
+        onResolve({ 
+            splitType: 'EXACT', 
+            participantDetails: exactBreakdown 
+        });
+    };
+
+    return (
+        <div className="card anomaly_card">
+            <h3>⚠️ Share-Based Split</h3>
+            <p className="desc">{row.description} - ₹{row.amount}</p>
+            <p className="note">Split IT doesn't support shares natively. We calculated EXACT amounts.</p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '5px', marginBottom: '15px' }}>
+                {exactBreakdown.map((b, i) => (
+                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px', background: '#f5f5f5', borderRadius: '4px' }}>
+                        <span>{b.member} ({row.shareBreakdown[i].shares} shares)</span>
+                        <strong>₹{b.exactAmount}</strong>
+                    </div>
+                ))}
+            </div>
+            <div className="actions">
+                <button className="btn primary" onClick={handleSave}>Convert to EXACT</button>
+                <button className="btn outline" onClick={() => onResolve({ splitType: 'EQUAL' })}>Force EQUAL</button>
+            </div>
+        </div>
+    );
+};
 
 const PercentageResolverCard = ({ row, onResolve }) => {
     const [breakdown, setBreakdown] = React.useState(row.percentageBreakdown || []);
