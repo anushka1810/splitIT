@@ -1,14 +1,31 @@
 const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
 
 // The internal Render database URL
 const internalDbUrl = "postgresql://splitit_db_5lye_user:AO9RhIZ2tkAERXflE9jYYcvhzVxQXcWy@dpg-d8nl883tqb8s73daac1g-a/splitit_db_5lye";
 
-// Use the environment variable if Render provides it, otherwise fallback to the hardcoded link
-process.env.DATABASE_URL = process.env.DATABASE_URL || internalDbUrl;
+const dbUrl = process.env.DATABASE_URL || internalDbUrl;
+process.env.DATABASE_URL = dbUrl;
 
 console.log("Starting deployment process...");
 
 try {
+  // Write the DATABASE_URL to backend/.env so Prisma finds it naturally
+  const envPath = path.join(__dirname, 'backend', '.env');
+  let envContent = '';
+  if (fs.existsSync(envPath)) {
+    envContent = fs.readFileSync(envPath, 'utf8');
+  }
+  // Replace or append DATABASE_URL
+  if (envContent.includes('DATABASE_URL=')) {
+    envContent = envContent.replace(/DATABASE_URL=.*/g, `DATABASE_URL="${dbUrl}"`);
+  } else {
+    envContent += `\nDATABASE_URL="${dbUrl}"\n`;
+  }
+  fs.writeFileSync(envPath, envContent);
+  console.log("Successfully wrote DATABASE_URL to backend/.env");
+
   console.log("Generating Prisma Client...");
   execSync('node node_modules/prisma/build/index.js generate --schema=backend/prisma/schema.prisma', { stdio: 'inherit' });
   
@@ -18,6 +35,9 @@ try {
   console.log("Starting the Express Server...");
   require('./server.js');
 } catch (e) {
-  console.error("Failed to run deployment steps:", e);
+  console.error("Failed to run deployment steps!");
+  console.error("Error Message:", e.message);
+  if (e.stdout) console.error("STDOUT:", e.stdout.toString());
+  if (e.stderr) console.error("STDERR:", e.stderr.toString());
   process.exit(1);
 }
