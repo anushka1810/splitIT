@@ -28,7 +28,7 @@ console.log("Generating Prisma Client...");
 execSync('node node_modules/prisma/build/index.js generate --schema=backend/prisma/schema.prisma', { stdio: 'inherit', env });
 
 console.log("Running Prisma Migrations...");
-execSync('node node_modules/prisma/build/index.js migrate deploy --schema=backend/prisma/schema.prisma', { stdio: 'inherit', env });
+execSync('node node_modules/prisma/build/index.js db push --schema=backend/prisma/schema.prisma --accept-data-loss', { stdio: 'inherit', env });
 
 console.log("Starting server...");
 require('./server.js');
