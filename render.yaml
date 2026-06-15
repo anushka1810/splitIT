@@ -1,0 +1,24 @@
+services:
+  # Backend Node.js Service
+  - type: web
+    name: splitit-backend
+    env: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: DATABASE_URL
+        sync: false # Requires manual setup in Render Dashboard if using external DB
+      - key: JWT_SECRET
+        generateValue: true
+
+  # Frontend React Service
+  - type: web
+    name: splitit-frontend
+    env: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_URL
+        value: "https://splitit-backend.onrender.com"
