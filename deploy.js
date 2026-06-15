@@ -30,10 +30,16 @@ try {
   fs.writeFileSync(backendEnvPath, envContent);
 
   console.log("Generating Prisma Client...");
-  execSync('node node_modules/prisma/build/index.js generate --schema=backend/prisma/schema.prisma', { stdio: 'inherit' });
+  execSync('node node_modules/prisma/build/index.js generate --schema=backend/prisma/schema.prisma', { 
+    stdio: 'inherit',
+    env: { ...process.env, DATABASE_URL: dbUrl }
+  });
   
   console.log("Running Prisma Migrations...");
-  execSync('node node_modules/prisma/build/index.js migrate deploy --schema=backend/prisma/schema.prisma', { stdio: 'inherit' });
+  execSync('node node_modules/prisma/build/index.js migrate deploy --schema=backend/prisma/schema.prisma', { 
+    stdio: 'inherit',
+    env: { ...process.env, DATABASE_URL: dbUrl }
+  });
   
   console.log("Starting the Express Server...");
   require('./server.js');
