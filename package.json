@@ -10,5 +10,9 @@
   },
   "scripts": {
     "start": "node node_modules/prisma/build/index.js generate && node node_modules/prisma/build/index.js migrate deploy && node server.js"
+  },
+  "dependencies": {
+    "prisma": "^7.8.0",
+    "@prisma/client": "^7.8.0"
   }
 }
