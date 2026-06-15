@@ -1,0 +1,11 @@
+{
+  "name": "splitit",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "backend"
+  ],
+  "prisma": {
+    "schema": "backend/prisma/schema.prisma"
+  }
+}
